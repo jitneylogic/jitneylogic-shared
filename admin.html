@@ -80,11 +80,22 @@
             <input type="text" id="client-id-input" placeholder="e.g. demo-pest-co">
             <div class="hint">Must exactly match the client's clientId in their cockpit.html config.</div>
 
-            <label for="reps-input">Reps to create</label>
-            <textarea id="reps-input" rows="6" placeholder="Full Name, email@example.com&#10;One per line. Works for a single rep too."></textarea>
-            <div class="hint">Format: Full Name, email — one per line.</div>
+            <label for="rep-name-input">Rep Name</label>
+            <input type="text" id="rep-name-input" placeholder="Full Name">
 
-            <button id="submit-btn" onclick="submitReps()">Create Rep(s)</button>
+            <label for="rep-email-input">Rep Email</label>
+            <input type="email" id="rep-email-input" placeholder="rep@example.com">
+            <div id="single-email-error" style="color:#f87171; font-size:12px; margin:-10px 0 16px; display:none;"></div>
+
+            <button id="submit-single-btn" onclick="submitSingleRep()">Create Rep</button>
+        </div>
+
+        <div class="card">
+            <label for="csv-file-input">Bulk upload (CSV)</label>
+            <div class="hint">Two columns: <code>name,email</code>, with a header row. <a href="#" onclick="downloadCsvTemplate(); return false;" style="color: var(--color-mint-soft);">Download a template</a> to avoid formatting mistakes.</div>
+            <input type="file" id="csv-file-input" accept=".csv">
+            <div id="csv-preview-area"></div>
+            <button id="submit-csv-btn" onclick="submitCsvReps()" disabled>Create All From CSV</button>
         </div>
 
         <div id="results-area"></div>
@@ -92,6 +103,7 @@
 
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script>
         // Same Firebase project as the cockpit/dashboard — safe to be public,
         // access is controlled by custom claims + jitneyadmin's own checks,
@@ -108,7 +120,7 @@
 
         // CONFIRM/UPDATE this after deploying jitneyadmin — Cloud Run prints
         // the real URL when the deploy finishes.
-        const JITNEYADMIN_URL = "https://jitneyadmin-889415757227.us-central1.run.app";
+        const JITNEYADMIN_URL = "https://jitneyadmin-889415757227.us-central1.run.app/";
 
         let callerRole = null;
         let callerClientId = null;
@@ -170,28 +182,16 @@
             }
         });
 
-        function parseRepLines(raw) {
-            return raw.split("\n")
-                .map(line => line.trim())
-                .filter(line => line.length > 0)
-                .map(line => {
-                    const parts = line.split(",");
-                    return {
-                        name: (parts[0] || "").trim(),
-                        email: (parts[1] || "").trim()
-                    };
-                });
+        function isValidEmail(email) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         }
 
-        async function submitReps() {
-            const btn = document.getElementById('submit-btn');
+        // Shared by both the single-rep form and the CSV path — one place
+        // that actually talks to jitneyadmin, so the two entry points can
+        // never drift apart in behavior.
+        async function createReps(clientId, reps, btn) {
             const resultsArea = document.getElementById('results-area');
-            const clientId = document.getElementById('client-id-input').value.trim();
-            const reps = parseRepLines(document.getElementById('reps-input').value);
-
-            if (!clientId) { alert("Client ID is required."); return; }
-            if (reps.length === 0) { alert("Enter at least one rep, one per line: Full Name, email"); return; }
-
+            const originalLabel = btn.innerText;
             btn.disabled = true;
             btn.innerText = "Creating...";
             resultsArea.innerHTML = "";
@@ -212,7 +212,9 @@
 
                 let html = "";
                 if (data.created && data.created.length > 0) {
-                    html += `<div class="save-warning">⚠ Save these passwords now — they are shown only once and are not stored anywhere retrievable.</div>`;
+                    lastCreatedReps = data.created;
+                    html += `<div class="save-warning">⚠ Save these passwords now — they are shown only once and are not stored anywhere retrievable. Each rep will be asked to set their own password on first login regardless. If you export the CSV below, delete it once you've distributed the credentials — it's a plaintext password file sitting on your computer.</div>`;
+                    html += `<button onclick="exportCreatedRepsCsv()" style="margin-bottom:12px;">Export Passwords as CSV</button>`;
                     html += `<table><thead><tr><th>Rep ID</th><th>Name</th><th>Email</th><th>Temp Password</th></tr></thead><tbody>`;
                     data.created.forEach(r => {
                         html += `<tr><td>${r.rep_id}</td><td>${r.name}</td><td>${r.email}</td><td class="pw">${r.tempPassword}</td></tr>`;
@@ -227,16 +229,129 @@
                     html += `</tbody></table>`;
                 }
                 resultsArea.innerHTML = html;
-                document.getElementById('reps-input').value = "";
-
             } catch (err) {
                 resultsArea.innerHTML = `<div class="save-warning">Request failed: ${err.message}</div>`;
             } finally {
                 btn.disabled = false;
-                btn.innerText = "Create Rep(s)";
+                btn.innerText = originalLabel;
             }
         }
-        window.submitReps = submitReps;
+
+        // ---- Single rep form ----
+        async function submitSingleRep() {
+            const clientId = document.getElementById('client-id-input').value.trim();
+            const name = document.getElementById('rep-name-input').value.trim();
+            const email = document.getElementById('rep-email-input').value.trim();
+            const emailErrorEl = document.getElementById('single-email-error');
+            emailErrorEl.style.display = "none";
+
+            if (!clientId) { alert("Client ID is required."); return; }
+            if (!name) { alert("Rep name is required."); return; }
+            if (!isValidEmail(email)) {
+                emailErrorEl.innerText = "That doesn't look like a valid email address.";
+                emailErrorEl.style.display = "block";
+                return;
+            }
+
+            const btn = document.getElementById('submit-single-btn');
+            await createReps(clientId, [{ name, email }], btn);
+            document.getElementById('rep-name-input').value = "";
+            document.getElementById('rep-email-input').value = "";
+        }
+        window.submitSingleRep = submitSingleRep;
+
+        // ---- CSV bulk upload ----
+        let parsedCsvReps = [];
+        let lastCreatedReps = [];
+
+        function exportCreatedRepsCsv() {
+            if (lastCreatedReps.length === 0) return;
+            const escapeCsvField = (val) => {
+                const s = String(val);
+                return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+            };
+            const header = "rep_id,name,email,temp_password";
+            const rows = lastCreatedReps.map(r =>
+                [r.rep_id, r.name, r.email, r.tempPassword].map(escapeCsvField).join(",")
+            );
+            const csvContent = [header, ...rows].join("\n") + "\n";
+            const blob = new Blob([csvContent], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `jitneylogic-new-reps-${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        window.exportCreatedRepsCsv = exportCreatedRepsCsv;
+
+        function downloadCsvTemplate() {
+            const csvContent = "name,email\nJane Smith,jane@example.com\nJohn Doe,john@example.com\n";
+            const blob = new Blob([csvContent], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "jitneylogic-rep-template.csv";
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        window.downloadCsvTemplate = downloadCsvTemplate;
+
+        document.getElementById('csv-file-input').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            const previewArea = document.getElementById('csv-preview-area');
+            const submitBtn = document.getElementById('submit-csv-btn');
+            parsedCsvReps = [];
+            submitBtn.disabled = true;
+            previewArea.innerHTML = "";
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: (results) => {
+                    const rows = results.data;
+                    const valid = [];
+                    const invalid = [];
+                    rows.forEach((row, i) => {
+                        const name = (row.name || "").trim();
+                        const email = (row.email || "").trim();
+                        if (!name || !isValidEmail(email)) {
+                            invalid.push({ row: i + 2, name, email }); // +2: header row + 0-index
+                        } else {
+                            valid.push({ name, email });
+                        }
+                    });
+                    parsedCsvReps = valid;
+
+                    let html = `<div class="hint">${valid.length} valid row(s)${invalid.length > 0 ? `, ${invalid.length} invalid row(s) — these will be skipped` : ""}.</div>`;
+                    if (invalid.length > 0) {
+                        html += `<table><thead><tr><th>CSV Row</th><th>Name</th><th>Email</th></tr></thead><tbody>`;
+                        invalid.forEach(r => {
+                            html += `<tr class="err-row"><td>${r.row}</td><td>${r.name || "(missing)"}</td><td>${r.email || "(missing)"}</td></tr>`;
+                        });
+                        html += `</tbody></table>`;
+                    }
+                    previewArea.innerHTML = html;
+                    submitBtn.disabled = valid.length === 0;
+                }
+            });
+        });
+
+        async function submitCsvReps() {
+            const clientId = document.getElementById('client-id-input').value.trim();
+            if (!clientId) { alert("Client ID is required."); return; }
+            if (parsedCsvReps.length === 0) { alert("No valid rows to submit."); return; }
+
+            const btn = document.getElementById('submit-csv-btn');
+            await createReps(clientId, parsedCsvReps, btn);
+            document.getElementById('csv-file-input').value = "";
+            document.getElementById('csv-preview-area').innerHTML = "";
+            parsedCsvReps = [];
+            btn.disabled = true;
+        }
+        window.submitCsvReps = submitCsvReps;
+                btn.disabled = false;
     </script>
 </body>
 </html>
