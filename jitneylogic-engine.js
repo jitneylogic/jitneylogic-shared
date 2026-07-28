@@ -468,10 +468,13 @@ function executeRealtimeCalculations() {
     setIfPresent('inject-initial-text', "$" + initialValue.toFixed(2));
     setIfPresent('inject-monthly-text', "$" + monthlyValue.toFixed(2));
 
-    const normalInitialMarkup = initialValue + 150;
-    setIfPresent('inject-pitch-normal', "$" + normalInitialMarkup.toFixed(2));
+    // Both figures here are the real, currently-selected/charged prices —
+    // no separate "normal vs. discounted" anchor framing for the demo
+    // script. Revisit per-client if a real anchor-price flow is needed;
+    // that requires a genuine stored anchor price per package, not a
+    // markup computed from whatever's currently selected (see roadmap).
+    setIfPresent('inject-pitch-normal', "$" + initialValue.toFixed(2));
     setIfPresent('inject-pitch-monthly', "$" + monthlyValue.toFixed(2));
-    setIfPresent('inject-pitch-discounted', "$" + initialValue.toFixed(2));
 
     let depositAmount = config.defaultDeposit ?? 39;
     const lowerPackageStr = currentPackage.toLowerCase();
