@@ -605,6 +605,26 @@ function attemptLogin() {
         .catch(err => { errorEl.innerText = err.message; });
 }
 
+function sendCockpitResetEmail() {
+    const email = document.getElementById('login-email').value.trim();
+    const errorEl = document.getElementById('login-error');
+    if (!email) {
+        errorEl.style.color = "#ef4444";
+        errorEl.innerText = "Enter your email above first, then click Forgot password.";
+        return;
+    }
+    firebase.auth().sendPasswordResetEmail(email)
+        .then(() => {
+            errorEl.style.color = "#4ade80";
+            errorEl.innerText = "Reset email sent — check your inbox.";
+        })
+        .catch(err => {
+            errorEl.style.color = "#ef4444";
+            errorEl.innerText = err.message;
+        });
+}
+window.sendCockpitResetEmail = sendCockpitResetEmail;
+
 function attemptLogout() {
     firebase.auth().signOut();
 }
@@ -619,6 +639,10 @@ async function attemptForcedReset() {
 
     if (newPassword.length < 8) {
         errorEl.innerText = "Password must be at least 8 characters.";
+        return;
+    }
+    if (!/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^a-zA-Z0-9]/.test(newPassword)) {
+        errorEl.innerText = "Password must include at least one letter, one number, and one special character.";
         return;
     }
     if (newPassword !== confirmPassword) {
