@@ -98,6 +98,13 @@
             <button id="submit-csv-btn" onclick="submitCsvReps()" disabled>Create All From CSV</button>
         </div>
 
+        <div class="card">
+            <label for="reset-email-input">Reset an Existing Rep's Password</label>
+            <input type="email" id="reset-email-input" placeholder="rep@example.com">
+            <div class="hint">Generates a new temp password and forces them through the first-login reset flow again — doesn't rely on email working.</div>
+            <button id="reset-rep-btn" onclick="submitResetRep()">Reset Password</button>
+        </div>
+
         <div id="results-area"></div>
     </div>
 
@@ -338,7 +345,48 @@
             });
         });
 
-        async function submitCsvReps() {
+        async function submitResetRep() {
+            const clientId = document.getElementById('client-id-input').value.trim();
+            const email = document.getElementById('reset-email-input').value.trim();
+            const btn = document.getElementById('reset-rep-btn');
+            const resultsArea = document.getElementById('results-area');
+
+            if (!clientId) { alert("Client ID is required (top of page)."); return; }
+            if (!isValidEmail(email)) { alert("Enter a valid rep email."); return; }
+
+            const originalLabel = btn.innerText;
+            btn.disabled = true;
+            btn.innerText = "Resetting...";
+            resultsArea.innerHTML = "";
+
+            try {
+                const token = await firebase.auth().currentUser.getIdToken();
+                const resp = await fetch(JITNEYADMIN_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+                    body: JSON.stringify({ action: "reset_rep_password", client_id: clientId, email })
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    resultsArea.innerHTML = `<div class="save-warning">Error: ${data.message || "Unknown error"}</div>`;
+                    return;
+                }
+
+                resultsArea.innerHTML = `
+                    <div class="save-warning">⚠ Save this password now — shown only once. They'll be forced to set their own on next login.</div>
+                    <table><thead><tr><th>Rep ID</th><th>Name</th><th>Email</th><th>New Temp Password</th></tr></thead><tbody>
+                        <tr><td>${data.rep_id}</td><td>${data.name}</td><td>${data.email}</td><td class="pw">${data.tempPassword}</td></tr>
+                    </tbody></table>`;
+                document.getElementById('reset-email-input').value = "";
+            } catch (err) {
+                resultsArea.innerHTML = `<div class="save-warning">Request failed: ${err.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = originalLabel;
+            }
+        }
+        window.submitResetRep = submitResetRep;
             const clientId = document.getElementById('client-id-input').value.trim();
             if (!clientId) { alert("Client ID is required."); return; }
             if (parsedCsvReps.length === 0) { alert("No valid rows to submit."); return; }
