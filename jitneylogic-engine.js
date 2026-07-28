@@ -473,8 +473,13 @@ function executeRealtimeCalculations() {
     // script. Revisit per-client if a real anchor-price flow is needed;
     // that requires a genuine stored anchor price per package, not a
     // markup computed from whatever's currently selected (see roadmap).
-    setIfPresent('inject-pitch-normal', "$" + initialValue.toFixed(2));
-    setIfPresent('inject-pitch-monthly', "$" + monthlyValue.toFixed(2));
+    //
+    // NOTE: these are CSS classes in cockpit.html, not ids (same pattern
+    // as inject-script-name), so they need querySelectorAll — getElementById
+    // silently finds nothing for a class, which is why this was stuck at
+    // $0.00 even though the calculation itself was always correct.
+    document.querySelectorAll('.inject-pitch-normal').forEach(el => { el.innerText = "$" + initialValue.toFixed(2); });
+    document.querySelectorAll('.inject-pitch-monthly').forEach(el => { el.innerText = "$" + monthlyValue.toFixed(2); });
 
     let depositAmount = config.defaultDeposit ?? 39;
     const lowerPackageStr = currentPackage.toLowerCase();
