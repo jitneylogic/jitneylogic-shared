@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JitneyLogic — Rep Admin</title>
+    <style>
+        :root {
+            --color-bg-dark: #2A3B31;
+            --color-box-translucent: rgba(255, 255, 255, 0.05);
+            --color-sage-accent: #4C9170;
+            --color-mint-soft: #8DC4AA;
+            --text-on-dark: #f8fafc;
+            --color-input-darkgreen: rgba(0,0,0,0.25);
+        }
+        body {
+            margin: 0; padding: 35px 40px;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--color-bg-dark); color: var(--text-on-dark);
+            min-height: 100vh; box-sizing: border-box;
+        }
+        h1 { font-size: 22px; margin-bottom: 4px; }
+        .subtitle { color: var(--color-mint-soft); font-size: 13px; margin-bottom: 30px; }
+        .card {
+            background: var(--color-box-translucent); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; padding: 24px; max-width: 640px; margin-bottom: 24px;
+        }
+        label { display: block; font-size: 12px; color: var(--color-mint-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, textarea {
+            width: 100%; box-sizing: border-box; padding: 10px 12px; margin-bottom: 16px;
+            background: var(--color-input-darkgreen); border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 5px; color: #fff; font-family: inherit; font-size: 14px;
+        }
+        textarea { resize: vertical; font-family: 'SFMono-Regular', Consolas, monospace; }
+        button {
+            background: var(--color-sage-accent); color: #fff; border: none;
+            padding: 11px 22px; border-radius: 6px; font-size: 14px; font-weight: 600;
+            cursor: pointer;
+        }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .hint { font-size: 12px; color: rgba(248,250,252,0.6); margin: -10px 0 16px; }
+        #login-gate { display: flex; flex-direction: column; align-items: flex-start; max-width: 340px; }
+        #app-content { display: none; }
+        #login-error { color: #f87171; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+        #whoami { font-size: 13px; color: var(--color-mint-soft); margin-bottom: 24px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        th { color: var(--color-mint-soft); text-transform: uppercase; font-size: 11px; }
+        .pw { font-family: 'SFMono-Regular', Consolas, monospace; color: #4ade80; }
+        .err-row td { color: #f87171; }
+        .save-warning {
+            background: rgba(217,119,6,0.15); border: 1px solid #d97706; color: #fbbf24;
+            padding: 10px 14px; border-radius: 6px; font-size: 12px; margin: 16px 0;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>JitneyLogic — Rep Admin</h1>
+    <div class="subtitle">Internal tool. Owners can create reps for any client; managers only their own.</div>
+
+    <div id="login-gate">
+        <div class="card" style="max-width:100%;">
+            <label for="login-email">Email</label>
+            <input type="email" id="login-email">
+            <label for="login-password">Password</label>
+            <input type="password" id="login-password">
+            <div id="login-error"></div>
+            <button onclick="attemptAdminLogin()">Log In</button>
+            <div style="margin-top:14px;">
+                <a href="#" onclick="sendResetEmail(); return false;" style="color: var(--color-mint-soft); font-size:12px;">Forgot password?</a>
+            </div>
+        </div>
+    </div>
+
+    <div id="app-content">
+        <div id="whoami"></div>
+
+        <div class="card">
+            <label for="client-id-input">Client ID</label>
+            <input type="text" id="client-id-input" placeholder="e.g. demo-pest-co">
+            <div class="hint">Must exactly match the client's clientId in their cockpit.html config.</div>
+
+            <label for="reps-input">Reps to create</label>
+            <textarea id="reps-input" rows="6" placeholder="Full Name, email@example.com&#10;One per line. Works for a single rep too."></textarea>
+            <div class="hint">Format: Full Name, email — one per line.</div>
+
+            <button id="submit-btn" onclick="submitReps()">Create Rep(s)</button>
+        </div>
+
+        <div id="results-area"></div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+    <script>
+        // Same Firebase project as the cockpit/dashboard — safe to be public,
+        // access is controlled by custom claims + jitneyadmin's own checks,
+        // not by hiding this config.
+        const firebaseConfig = {
+            apiKey: "AIzaSyDkWrGWcepdHlkzkeSGWLiIrV0Kxsul4nE",
+            authDomain: "jitneylogic-beta.firebaseapp.com",
+            projectId: "jitneylogic-beta",
+            storageBucket: "jitneylogic-beta.firebasestorage.app",
+            messagingSenderId: "889415757227",
+            appId: "1:889415757227:web:9e54a600eb654bb30276ee",
+            measurementId: "G-4JECF3BX6E"
+        };
+
+        // CONFIRM/UPDATE this after deploying jitneyadmin — Cloud Run prints
+        // the real URL when the deploy finishes.
+        const JITNEYADMIN_URL = "https://jitneyadmin-889415757227.us-central1.run.app";
+
+        let callerRole = null;
+        let callerClientId = null;
+
+        firebase.initializeApp(firebaseConfig);
+
+        function attemptAdminLogin() {
+            const email = document.getElementById('login-email').value.trim();
+            const password = document.getElementById('login-password').value;
+            const errorEl = document.getElementById('login-error');
+            errorEl.innerText = "";
+            firebase.auth().signInWithEmailAndPassword(email, password)
+                .catch(err => { errorEl.innerText = err.message; });
+        }
+        window.attemptAdminLogin = attemptAdminLogin;
+
+        function sendResetEmail() {
+            const email = document.getElementById('login-email').value.trim();
+            const errorEl = document.getElementById('login-error');
+            if (!email) { errorEl.innerText = "Enter your email above first, then click Forgot password."; return; }
+            firebase.auth().sendPasswordResetEmail(email)
+                .then(() => { errorEl.style.color = "#4ade80"; errorEl.innerText = "Reset email sent — check your inbox."; })
+                .catch(err => { errorEl.style.color = "#f87171"; errorEl.innerText = err.message; });
+        }
+        window.sendResetEmail = sendResetEmail;
+
+        firebase.auth().onAuthStateChanged(async (user) => {
+            const loginGate = document.getElementById('login-gate');
+            const appContent = document.getElementById('app-content');
+
+            if (!user) {
+                if (loginGate) loginGate.style.display = "flex";
+                if (appContent) appContent.style.display = "none";
+                return;
+            }
+
+            const tokenResult = await user.getIdTokenResult();
+            const role = tokenResult.claims.role;
+            if (role !== "owner" && role !== "manager") {
+                document.getElementById('login-error').innerText =
+                    "This account has no admin access. Contact the system owner.";
+                firebase.auth().signOut();
+                return;
+            }
+
+            callerRole = role;
+            callerClientId = tokenResult.claims.client_id || null;
+
+            loginGate.style.display = "none";
+            appContent.style.display = "block";
+
+            document.getElementById('whoami').innerText =
+                `Logged in as ${user.email} — role: ${role}` + (role === "manager" ? ` (client: ${callerClientId})` : " (all clients)");
+
+            const clientIdInput = document.getElementById('client-id-input');
+            if (role === "manager") {
+                clientIdInput.value = callerClientId;
+                clientIdInput.disabled = true;
+            }
+        });
+
+        function parseRepLines(raw) {
+            return raw.split("\n")
+                .map(line => line.trim())
+                .filter(line => line.length > 0)
+                .map(line => {
+                    const parts = line.split(",");
+                    return {
+                        name: (parts[0] || "").trim(),
+                        email: (parts[1] || "").trim()
+                    };
+                });
+        }
+
+        async function submitReps() {
+            const btn = document.getElementById('submit-btn');
+            const resultsArea = document.getElementById('results-area');
+            const clientId = document.getElementById('client-id-input').value.trim();
+            const reps = parseRepLines(document.getElementById('reps-input').value);
+
+            if (!clientId) { alert("Client ID is required."); return; }
+            if (reps.length === 0) { alert("Enter at least one rep, one per line: Full Name, email"); return; }
+
+            btn.disabled = true;
+            btn.innerText = "Creating...";
+            resultsArea.innerHTML = "";
+
+            try {
+                const token = await firebase.auth().currentUser.getIdToken();
+                const resp = await fetch(JITNEYADMIN_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+                    body: JSON.stringify({ client_id: clientId, reps })
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    resultsArea.innerHTML = `<div class="save-warning">Error: ${data.message || "Unknown error"}</div>`;
+                    return;
+                }
+
+                let html = "";
+                if (data.created && data.created.length > 0) {
+                    html += `<div class="save-warning">⚠ Save these passwords now — they are shown only once and are not stored anywhere retrievable.</div>`;
+                    html += `<table><thead><tr><th>Rep ID</th><th>Name</th><th>Email</th><th>Temp Password</th></tr></thead><tbody>`;
+                    data.created.forEach(r => {
+                        html += `<tr><td>${r.rep_id}</td><td>${r.name}</td><td>${r.email}</td><td class="pw">${r.tempPassword}</td></tr>`;
+                    });
+                    html += `</tbody></table>`;
+                }
+                if (data.failed && data.failed.length > 0) {
+                    html += `<table><thead><tr><th>Failed</th><th>Reason</th></tr></thead><tbody>`;
+                    data.failed.forEach(f => {
+                        html += `<tr class="err-row"><td>${f.email || "(missing)"}</td><td>${f.error}</td></tr>`;
+                    });
+                    html += `</tbody></table>`;
+                }
+                resultsArea.innerHTML = html;
+                document.getElementById('reps-input').value = "";
+
+            } catch (err) {
+                resultsArea.innerHTML = `<div class="save-warning">Request failed: ${err.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Create Rep(s)";
+            }
+        }
+        window.submitReps = submitReps;
+    </script>
+</body>
+</html>
