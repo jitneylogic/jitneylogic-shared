@@ -611,12 +611,99 @@ function attemptLogout() {
 window.attemptLogin = attemptLogin;
 window.attemptLogout = attemptLogout;
 
+async function attemptForcedReset() {
+    const newPassword = document.getElementById('reset-new-password').value;
+    const confirmPassword = document.getElementById('reset-confirm-password').value;
+    const errorEl = document.getElementById('reset-error');
+    errorEl.innerText = "";
+
+    if (newPassword.length < 8) {
+        errorEl.innerText = "Password must be at least 8 characters.";
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        errorEl.innerText = "Passwords don't match.";
+        return;
+    }
+
+    const config = getConfig();
+    if (!config.adminUrl) {
+        errorEl.innerText = "Setup error: adminUrl is not configured. Contact your administrator.";
+        return;
+    }
+
+    try {
+        const user = firebase.auth().currentUser;
+        await user.updatePassword(newPassword);
+
+        const token = await user.getIdToken(true);
+        const resp = await fetch(config.adminUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: JSON.stringify({ action: "clear_password_reset_flag" })
+        });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            errorEl.innerText = "Password was set, but couldn't finish setup: " + (data.message || "unknown error") + ". Contact your administrator.";
+            return;
+        }
+
+        // Force a fresh token so the cleared claim is reflected immediately,
+        // then re-run the gate check directly (NOT initAuthGate(), which
+        // would register a second onAuthStateChanged listener).
+        await user.getIdToken(true);
+        evaluateAuthGateState(firebase.auth().currentUser);
+    } catch (err) {
+        errorEl.innerText = err.message;
+    }
+}
+window.attemptForcedReset = attemptForcedReset;
+
 function startAppAfterLogin() {
     initTurnkeyEnvironment();
     initAddressAutocomplete();
     initLiveLeaderboard();
     runDynamicGuardrails();
     updateConsolidatedAppointmentNotes();
+}
+
+async function evaluateAuthGateState(user) {
+    const loginGate = document.getElementById('login-gate');
+    const appContent = document.getElementById('app-content');
+
+    if (!user) {
+        currentRepClaims = null;
+        if (loginGate) loginGate.style.display = "flex";
+        if (appContent) appContent.style.display = "none";
+        return;
+    }
+
+    const tokenResult = await user.getIdTokenResult();
+    if (!tokenResult.claims.rep_id || !tokenResult.claims.rep_name) {
+        document.getElementById('login-error').innerText =
+            "This account has no rep profile attached. Contact your administrator.";
+        firebase.auth().signOut();
+        return;
+    }
+
+    currentRepClaims = { rep_id: tokenResult.claims.rep_id, rep_name: tokenResult.claims.rep_name };
+
+    const forceResetGate = document.getElementById('force-reset-gate');
+    if (tokenResult.claims.must_reset_password) {
+        if (loginGate) loginGate.style.display = "none";
+        if (appContent) appContent.style.display = "none";
+        if (forceResetGate) forceResetGate.style.display = "flex";
+        return;
+    }
+    if (forceResetGate) forceResetGate.style.display = "none";
+
+    if (loginGate) loginGate.style.display = "none";
+    if (appContent) appContent.style.display = "flex";
+
+    const displayEl = document.getElementById('logged-in-rep-display');
+    if (displayEl) displayEl.innerText = `${currentRepClaims.rep_name} (${currentRepClaims.rep_id})`;
+
+    startAppAfterLogin();
 }
 
 function initAuthGate() {
@@ -628,36 +715,7 @@ function initAuthGate() {
     if (!firebase.apps.length) {
         firebase.initializeApp(config.firebaseConfig);
     }
-
-    firebase.auth().onAuthStateChanged(async (user) => {
-        const loginGate = document.getElementById('login-gate');
-        const appContent = document.getElementById('app-content');
-
-        if (!user) {
-            currentRepClaims = null;
-            if (loginGate) loginGate.style.display = "flex";
-            if (appContent) appContent.style.display = "none";
-            return;
-        }
-
-        const tokenResult = await user.getIdTokenResult();
-        if (!tokenResult.claims.rep_id || !tokenResult.claims.rep_name) {
-            document.getElementById('login-error').innerText =
-                "This account has no rep profile attached. Contact your administrator.";
-            firebase.auth().signOut();
-            return;
-        }
-
-        currentRepClaims = { rep_id: tokenResult.claims.rep_id, rep_name: tokenResult.claims.rep_name };
-
-        if (loginGate) loginGate.style.display = "none";
-        if (appContent) appContent.style.display = "flex";
-
-        const displayEl = document.getElementById('logged-in-rep-display');
-        if (displayEl) displayEl.innerText = `${currentRepClaims.rep_name} (${currentRepClaims.rep_id})`;
-
-        startAppAfterLogin();
-    });
+    firebase.auth().onAuthStateChanged(evaluateAuthGateState);
 }
 window.initAuthGate = initAuthGate;
 
