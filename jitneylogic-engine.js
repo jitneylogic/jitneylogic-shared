@@ -1112,4 +1112,12 @@ async function fireRevenuePipelineTracking(event) {
     syncScheduleDetails();
     runDynamicGuardrails();
     parseScriptPestLogicHandshake();
+
+    // Fields are cleared above, but scroll position isn't — a rep coming off
+    // a long call would otherwise land back on a blank form still scrolled
+    // partway down from the previous one.
+    const scriptPaneEl = document.getElementById('script-pane');
+    const inputPaneEl = document.getElementById('input-pane');
+    if (scriptPaneEl) scriptPaneEl.scrollTop = 0;
+    if (inputPaneEl) inputPaneEl.scrollTop = 0;
 }
