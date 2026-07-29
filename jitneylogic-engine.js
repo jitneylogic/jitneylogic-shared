@@ -725,7 +725,7 @@ async function evaluateAuthGateState(user) {
     if (appContent) appContent.style.display = "flex";
 
     const displayEl = document.getElementById('logged-in-rep-display');
-    if (displayEl) displayEl.innerText = `${currentRepClaims.rep_name} (${currentRepClaims.rep_id})`;
+    if (displayEl) displayEl.innerText = currentRepClaims.rep_name;
 
     startAppAfterLogin();
 }
