@@ -625,6 +625,29 @@ function sendCockpitResetEmail() {
 }
 window.sendCockpitResetEmail = sendCockpitResetEmail;
 
+// Fire-and-forget: persists the rep's current theme choice so it can be
+// aggregated later ("which theme gets used most"). Self-service only —
+// jitneyadmin's set_theme_preference action only ever touches the calling
+// rep's own account, verified from their own token. Failure here should
+// never block the UI switch itself, so errors are swallowed after logging.
+async function syncThemePreference(theme) {
+    const config = getConfig();
+    if (!config.adminUrl) return;
+    try {
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+        const token = await user.getIdToken();
+        await fetch(config.adminUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: JSON.stringify({ action: "set_theme_preference", theme })
+        });
+    } catch (err) {
+        console.error("Theme preference sync failed (non-blocking):", err.message);
+    }
+}
+window.syncThemePreference = syncThemePreference;
+
 function attemptLogout() {
     firebase.auth().signOut();
 }
